@@ -1,0 +1,22 @@
+{
+  "servidor": {
+    "host": "localhost",
+    "puerto": 502
+  },
+  "parametros_planta": {
+    "potencia_nominal_w": 32000,
+    "tension_paneles_vdc": 680
+  },
+  "registros": {
+    "orden_marcha": 0,
+    "reset_alarma": 1,
+    "estado_inversor": 100,
+    "tension_dc": 101,
+    "potencia_activa": 102,
+    "frecuencia_red": 103,
+    "codigo_alarma": 104,
+    "bateria_soc": 110,
+    "bateria_potencia": 111,
+    "limite_potencia": 200
+  }
+}

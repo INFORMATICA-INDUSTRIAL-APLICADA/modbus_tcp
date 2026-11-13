@@ -1,0 +1,16 @@
+{
+  "conexion_inversor": {
+    "host": "localhost",
+    "puerto": 502
+  },
+  "scada": {
+    "tiempo_refresco_segundos": 1.0
+  },
+  "tags": {
+    "orden_marcha": 0,
+    "reset_alarma": 1,
+    "estado_inversor": 100,
+    "tension_dc": 101,
+    "_ayuda_alumno": "COMPLETA AQUI LOS TAGS QUE FALTAN: potencia_activa, frecuencia_red, codigo_alarma, limite_potencia"
+  }
+}
