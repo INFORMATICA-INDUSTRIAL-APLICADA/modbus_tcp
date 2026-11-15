@@ -136,7 +136,12 @@ En una **planta solar fotovoltaica o subestación eléctrica ocurre exactamente 
 
 ### ¿Cómo se blinda un sistema industrial en la realidad? (El estándar ISA/IEC 62443)
 
-En una instalación real, los inversores o autómatas **jamás se conectan directamente a Internet ni a la red corporativa**. Se aplica la arquitectura de defensa en profundidad mediante una **Pasarela Segura en la DMZ Industrial (*Industrial DMZ / IDMZ*)**:
+> [!NOTE]
+> **Nota de alcance:** En el código de esta práctica simulamos el **escalón local de planta** (la comunicación directa por cable local entre el SCADA de la caseta y el Inversor). En esta sección explicamos cómo se protege la instalación cuando es necesario conectarla con un centro de control remoto en el exterior.
+
+En una instalación real, los inversores o autómatas **jamás se conectan directamente a Internet ni a la red corporativa**. Según los estándares internacionales de ciberseguridad industrial (como **ISA/IEC 62443**), se aplica el principio de *Defensa en Profundidad* interponiendo una zona de aislamiento denominada **DMZ Industrial (*Industrial DMZ* o *iDMZ*)**.
+
+En la bibliografía técnica y en la industria no existe una única forma de construir esta frontera, sino que se implementan distintas variantes arquitectónicas según el tamaño y la criticidad de la instalación. **De entre las diferentes opciones posibles, a continuación vamos a analizar una de las más representativas y didácticas en parques solares: el uso de una Pasarela Segura (*Edge Gateway*) en la iDMZ**:
 
 ```
   [ RED OT / PLANTA SOLAR ] (Aislada físicamente)
@@ -145,7 +150,7 @@ En una instalación real, los inversores o autómatas **jamás se conectan direc
          |
          v [Puerto de Red 1 (Tarjeta física OT)]
   ========================================================================
-  [ PASARELA SEGURA EN DMZ (EDGE GATEWAY) ] (Ej.: Siemens IOT2050, Moxa)
+  [ PASARELA SEGURA EN iDMZ (EDGE GATEWAY) ] (Ej.: Siemens IOT2050, Moxa)
     1. Doble tarjeta de red física (NIC: Network Interface Card).
        Enrutamiento IP desactivado (aislamiento físico entre ambas bocas).
     2. Valida certificados digitales X.509 de la CA corporativa (mTLS).
@@ -168,35 +173,35 @@ En una instalación real, los inversores o autómatas **jamás se conectan direc
 > La diferencia se entiende analizando en qué nivel del **modelo TCP/IP de 4 capas** actúa cada equipo:
 > 
 > * **Un Router trabaja en la Capa 2 (Internet / IP):** Su cometido es **enrutar**, es decir, conmutar y dejar pasar los paquetes de una red a otra. Si un paquete IP viene de fuera dirigido al inversor, el router lo deja atravesar hacia la red de campo. Si ese paquete contiene un ciberataque o una orden maliciosa, el paquete impacta directamente contra el microcontrolador del inversor.
-> * **La Pasarela Edge (DMZ) trabaja en la Capa 4 (Aplicación):** Tiene el **enrutamiento IP desactivado** en su sistema operativo (`ip_forward = 0`). No deja pasar paquetes entre tarjetas. El paquete que viene de fuera **muere obligatoriamente en la tarjeta externa**. Es un programa software en el espacio de usuario (Capa de Aplicación) el que procesa la información en memoria RAM, comprueba los certificados de seguridad, y fabrica desde cero un paquete Modbus nuevo y limpio para enviarlo por la tarjeta interna.
+> * **La Pasarela Edge (iDMZ) trabaja en la Capa 4 (Aplicación):** Tiene el **enrutamiento IP desactivado** en su sistema operativo (`ip_forward = 0`). No deja pasar paquetes entre tarjetas. El paquete que viene de fuera **muere obligatoriamente en la tarjeta externa**. Es un programa software en el espacio de usuario (Capa de Aplicación) el que procesa la información en memoria RAM, comprueba los permisos y fabrica desde cero un paquete Modbus nuevo y limpio para enviarlo por la tarjeta interna.
 > 
 > | Dispositivo | Capa TCP/IP en la que actúa | Comportamiento con los paquetes | Nivel de protección |
 > | :--- | :--- | :--- | :--- |
 > | **Router** | **Capa 2: Internet (IP)** | Deja pasar y reenvía el mismo paquete IP de un lado al otro. | ⚠️ Continuidad de red (un atacante puede alcanzar el inversor). |
-> | **Pasarela Edge (DMZ)** | **Capa 4: Aplicación** | El paquete externo muere. Un programa valida el contenido y crea un paquete nuevo. | 🛡️ Aislamiento total (Ruptura de protocolo, ningún paquete externo cruza a la planta). |
+> | **Pasarela Edge (iDMZ)** | **Capa 4: Aplicación** | El paquete externo muere. Un programa valida el contenido y crea un paquete nuevo. | 🛡️ Aislamiento con ruptura de protocolo (ningún paquete externo cruza a la planta). |
 
 #### 1. ¿Cómo se evita que lleguen consignas falsas o no autorizadas? (Criptografía Asimétrica, CA y Ruptura de Protocolo)
 
 Una pregunta lógica e inmediata al ver el diagrama anterior es:  
 **«Si el enrutamiento IP está desactivado, ¿cómo viaja la orden desde el SCADA hasta el inversor?»**
 
-La respuesta es la clave de la ciberseguridad industrial: **el paquete que envía el SCADA NUNCA llega al inversor. El paquete del SCADA muere en el Gateway.**
+La respuesta es una de las claves de la ciberseguridad industrial: **el paquete que envía el SCADA NUNCA llega al inversor. El paquete del SCADA muere en el Gateway.**
 
 No existe una única conexión continua que atraviese el sistema; existen **dos conexiones totalmente independientes** gestionadas por el Gateway:
 
 ```
-[ SCADA Central Remoto ]              [ GATEWAY en la DMZ ]                   [ Inversor Solar en Campo ]
+[ SCADA Central Remoto ]              [ GATEWAY en la iDMZ ]                  [ Inversor Solar en Campo ]
          |                                      |                                          |
-         |  1. Envía orden cifrada con mTLS     |                                          |
-         |     (Destino: IP del Gateway)        |                                          |
+         |  1. Envía orden por túnel mTLS       |                                          |
+         |     (Enlace externo WAN / VPN)       |                                          |
          |------------------------------------->|                                          |
          |                                      |                                          |
          |                         [ EL PAQUETE IP MUERE AQUÍ ]                            |
-         |                         El software del Gateway:                                |
-         |                         1. Valida el certificado X.509 con la CA                |
-         |                         2. Comprueba permisos del operador                      |
-         |                         3. Extrae el dato: "Límite al 50%"                      |
-         |                         4. Cierra la petición externa                           |
+         |                         Paso 1 (Transporte mTLS):                               |
+         |                           - Valida certificado X.509 con la CA                  |
+         |                         Paso 2 (Software en Capa de Aplicación):                |
+         |                           - Comprueba rol y permisos del operador               |
+         |                           - Verifica rango seguro: "Límite al 50%"              |
          |                                      |                                          |
          |                                      | 2. El Gateway CREA un paquete NUEVO      |
          |                                      |    Modbus TCP (Origen: IP del Gateway,   |
@@ -205,21 +210,22 @@ No existe una única conexión continua que atraviese el sistema; existen **dos 
          |                                      |                                          |
 ```
 
-##### Paso a paso de la orden:
-1. **Paso 1: Establecimiento del canal seguro mTLS (Nivel de Transporte y Criptografía):**  
-   * El SCADA central no se conecta al inversor; **se conecta a la tarjeta de red externa de la pasarela (Gateway)**.
+##### Paso a paso de la orden (correspondiente a los 4 bloques de la figura inferior):
+1. **Paso 1: Canal seguro mTLS (Nivel de Transporte y Criptografía):**  
+   * El SCADA central y la tarjeta de red externa de la pasarela (Gateway) se comunican a través de un túnel cifrado con **Autenticación Mutua (mTLS - *Mutual TLS*)** *(ya sea sobre una red privada corporativa/VPN o mediante una sesión saliente previamente abierta por la pasarela, como veremos en el punto 3)*.
    * Durante el saludo inicial (*handshake*), ambos extremos se exigen sus certificados digitales X.509 firmados por la **Autoridad de Certificación (CA)** privada de la eléctrica.
    * La pasarela valida criptográficamente la firma y vigencia del certificado del SCADA y comprueba las listas de revocación.  
-   * **Si la validación criptográfica falla, la conexión se rechaza y se cierra en el acto.** Ningún dato entra al equipo. Si es válida, se pacta la clave simétrica AES y se abre el túnel cifrado.
-2. **Paso 2: Procesamiento en el "cerebro" del Gateway (Capa de Aplicación):**  
+   * **Si la validación criptográfica falla, la conexión se rechaza y se cierra en el acto.** Ningún dato entra al equipo. Si es válida, se pacta la clave simétrica AES y queda establecido el túnel cifrado.
+2. **Paso 2: Control en el "cerebro" del Gateway (Capa de Aplicación):**  
    Una vez recibido el mensaje cifrado y desempaquetado en memoria, el software del Gateway (un servicio en Python o C) ejecuta la lógica de control:
-   * **Autorización (Control de Acceso):** Identifica quién es el emisor según su certificado (ej. `operador_despacho_central`) y verifica en su tabla de permisos si ese rol está autorizado a modificar consignas de generación o solo a monitorizar.
+   * **Autorización (Control de Acceso por roles):** Identifica quién es el emisor según su certificado (ej. `operador_despacho_central`) y verifica en su tabla de permisos si ese rol está autorizado a modificar consignas de generación o solo a monitorizar.
    * **Validación de rangos y seguridad física:** Comprueba que la consigna solicitada (`50%`) sea un número legal dentro de los límites de seguridad de la planta ($0\text{ a }100\%$) y que no viole rampas máximas de subida de potencia.
-   * Si todo es correcto, **extrae el valor numérico útil** (`50`) y desecha la estructura externa.
-3. **Paso 3: Conexión interna hacia el Inversor (Red local OT):**  
+   * Si alguna comprobación falla, **rechaza y bloquea la petición**. Si todo es correcto, **extrae el valor numérico útil** (`50`) y desecha la estructura externa.
+3. **Paso 3: Generación de un nuevo paquete (Red local OT):**  
    * Ahora, el software del Gateway abre **una conexión de red completamente nueva y separada** por su tarjeta física interna hacia la IP local del inversor (`192.168.1.100:502`).
-   * El Gateway fabrica desde cero una trama binaria Modbus TCP limpia (Función `06`, Registro `200`, Valor `50`) y se la envía al inversor por el cable local.
-   * Para el inversor solar, **quien le ha dado la orden ha sido el Gateway** (su vecino de cuadro). El inversor no tiene ni idea de que existe Internet, ni de qué es una IP pública, ni de que la orden vino de un centro de control a cientos de kilómetros.
+   * El Gateway fabrica desde cero una trama binaria Modbus TCP limpia (Función `06`, Registro `200`, Valor `50`, con *Origen: IP del Gateway* y *Destino: IP local del Inversor*) y la envía por el cable de planta.
+4. **Paso 4: El inversor recibe y ejecuta la orden:**  
+   * Para el inversor solar, **quien le ha dado la orden ha sido únicamente el Gateway** (su vecino de cuadro). El inversor no tiene ni idea de que existe Internet, ni de qué es una IP pública, ni de que la orden vino originalmente de un centro de control remoto.
 
 ![filtrado_consignas_falsas](filtrado_consignas_falsas.png)
 
@@ -227,9 +233,9 @@ No existe una única conexión continua que atraviese el sistema; existen **dos 
 > Imagina una fábrica en Valladolid donde el operario solo habla español, y un cliente en Tokio que solo habla japonés:
 > * **Si hubiera enrutamiento IP:** Sería como meter al japonés dentro de la fábrica para que intente darle órdenes a gritos al operario (peligro de seguridad y nadie se entiende).
 > * **Con el Gateway (sin enrutamiento):**  
->   1. El japonés llama por teléfono al intérprete (el Gateway) y se identifica con su pasaporte (certificado firmado por la CA).
+>   1. El japonés y el intérprete (el Gateway) hablan por una línea telefónica exterior y se identifican con su pasaporte (certificado firmado por la CA).
 >   2. El intérprete escucha la orden en japonés: *"Bajad la potencia al 50%"*.
->   3. El intérprete cuelga la llamada internacional.
+>   3. El intérprete termina la gestión en esa línea internacional.
 >   4. El intérprete se da la vuelta en el taller y le dice al operario en español: *"Oye, pon la máquina al 50%"*.
 >
 > Esto es lo que en ciberseguridad industrial se denomina **Ruptura de Protocolo (*Protocol Break*)**: los paquetes de red jamás cruzan de un lado a otro; es una aplicación intermedia autorizada la que inspecciona, filtra y regenera el mensaje de forma segura.
@@ -246,29 +252,29 @@ No existe una única conexión continua que atraviese el sistema; existen **dos 
     "bateria_soc_pct": 85
   }
   ```
-* Este JSON se transmite a través de Internet protegido dentro del **mismo canal seguro negociado en el mTLS**. Al ser cifrado simétrico, la clave pactada (**AES-256**) se utiliza de forma **bidireccional**: sirve tanto para descifrar las órdenes que bajan del SCADA como para cifrar la telemetría que sube de la planta sobre **MQTTS (puerto 8883 con TLS)** o **HTTPS (puerto 443)**.
+* Este JSON se transmite a través de la red externa protegido dentro del **mismo canal seguro negociado en el mTLS**. Al ser cifrado simétrico, la clave pactada (**AES-256**) se utiliza de forma **bidireccional**: sirve tanto para descifrar las órdenes que bajan del SCADA como para cifrar la telemetría que sube de la planta sobre **MQTTS (puerto 8883 con TLS)** o **HTTPS (puerto 443)**.
 * Cualquier intento de interceptar o modificar los datos en tránsito (*ataque Man-in-the-Middle*) corrompe la firma de integridad del paquete TLS y es detectado y descartado de inmediato por el centro de control.
 
 ![falseamiento_lecturas](falseamiento_lecturas.png)
 
-#### 3. Conexiones "Solo de Salida" y Puertos Efímeros
-Una duda muy habitual es: *«Si el SCADA tiene que enviar órdenes a la planta, ¿significa que la pasarela debe tener un puerto abierto hacia Internet esperando conexiones?»*
+#### 3. Conexiones "Solo de Salida" (*Outbound-only*) y Puertos Efímeros
+Al ver en el apartado 1 que el SCADA envía órdenes hacia la pasarela, surge una duda muy habitual: *«Si la planta se conecta a través de Internet o de un router 4G/5G, ¿significa que la pasarela debe tener un puerto abierto hacia Internet esperando a que el SCADA la llame?»*
 
-En ciberseguridad industrial la respuesta es **rotundamente NO**, y aquí es donde se aplica directamente lo estudiado en el tema de teoría sobre la Capa de Transporte TCP/IP:
+Cuando no se dispone de una red privada dedicada (fibra oscura o VPN corporativa punto a punto) y se atraviesa Internet público, la respuesta en ciberseguridad industrial es **NO**: se emplea el patrón de **conexión saliente (*Outbound-only*)**, aplicando directamente lo estudiado en teoría sobre los *sockets* y la Capa de Transporte TCP/IP:
 
 * **El Servidor y los Puertos Bien Conocidos (*Well-Known Ports*):**  
-  Un servidor debe mantener un puerto fijo y abierto permanentemente a la escucha (como el puerto `502` de Modbus o el `443` de HTTPS). Si dejas un puerto a la escucha abierto hacia Internet, es como dejar la puerta de la calle con el pestillo quitado: robots automáticos rastrean continuamente millones de IPs buscando puertos abiertos para intentar explotarlos.
+  Un servidor debe mantener un puerto fijo y abierto permanentemente a la escucha (como el puerto `502` de Modbus o el `443` de HTTPS). Si dejas un puerto a la escucha abierto hacia Internet público en medio de un campo solar, es como dejar la puerta de la calle con el pestillo quitado: robots automáticos rastrean continuamente millones de IPs buscando puertos abiertos para intentar explotarlos.
 * **El Cliente y los Puertos Efímeros (La clave de la seguridad perimetral):**  
-  Como vimos en el tema de _sockets_, cuando un equipo actúa como **cliente** y abre una conexión hacia afuera, su sistema operativo le asigna un **puerto efímero temporal** (del rango dinámico `49152` a `65535`).  
-  * Ocurre exactamente igual que cuando navegas por la web desde tu ordenador en casa: tú no abres ningún puerto en tu router. Tu PC inicia la conexión **hacia afuera** usando un puerto efímero. El cortafuegos perimetral recuerda esa conversación (*Stateful Firewall*), permite que el servidor web responda, pero **bloquea fulminantemente cualquier intento de llamada entrante que provenga de la calle**.
+  Como vimos en el tema de _sockets_ y de fundamentos de Ethernet, cuando un equipo actúa como **cliente** y abre una conexión hacia afuera, su sistema operativo le asigna un **puerto efímero temporal** (del rango dinámico `49152` a `65535`).  
+  * Ocurre exactamente igual que cuando navegas por la web desde tu ordenador en casa: tú no abres ningún puerto en tu router. Tu PC inicia la conexión **hacia afuera** usando un puerto efímero. El cortafuegos perimetral recuerda esa conversación (*Stateful Firewall*), permite que el servidor web responda, pero **bloquea fulminantemente cualquier intento de llamada entrante no solicitada que provenga de la calle**.
 * **El "Doble Sombrero" de Cliente de la Pasarela Edge:**  
-  Para blindar la planta, la Pasarela Edge de la DMZ **actúa como Cliente en ambas direcciones**:
+  En esta arquitectura sobre redes públicas, la Pasarela Edge de la iDMZ **actúa como Cliente a nivel de conexión TCP en ambas direcciones**:
   1. **Hacia la planta OT (red interna):** Actúa como **Cliente Modbus** (usando puertos efímeros) para interrogar al inversor solar (que es el **Servidor** escuchando en el puerto local `502`).
-  2. **Hacia Internet (red externa / WAN):** Actúa como **Cliente seguro** (usando puertos efímeros) para llamar hacia afuera al Servidor Central del SCADA (que escucha en el puerto seguro `8883` de MQTTS o `443` de HTTPS).
-* **Resultado:** La planta solar **no tiene ningún puerto de entrada abierto hacia Internet**. Al operar únicamente con conexiones salientes y puertos efímeros, la planta es completamente invisible desde el exterior. Y como el túnel mTLS ya ha sido abierto legítimamente desde dentro, el centro de control puede bajar órdenes a través de esa misma línea bidireccional.
-
+  2. **Hacia Internet (red externa / WAN):** Actúa como **Cliente seguro** (usando puertos efímeros) para llamar hacia afuera al Servidor Central o *Broker* del SCADA en la nube (que escucha en el puerto seguro `8883` de MQTTS o `443` de HTTPS).
+* **Resultado:** La planta solar **no necesita tener ningún puerto de entrada abierto hacia Internet**. Al operar únicamente con conexiones salientes y puertos efímeros, la planta es invisible ante escaneos externos. Y una vez que la pasarela ha dejado establecido ese túnel mTLS persistente desde dentro hacia el servidor central, el centro de control puede bajar órdenes a través de esa misma línea bidireccional ya abierta.
 
 ![conexiones_solo_salida](conexiones_solo_salida.png)
+
 ---
 
 ### ¿Encontraremos archivos `.json` dentro de un inversor o autómata comercial?
@@ -330,7 +336,7 @@ Ambos sistemas deben coincidir en el mapeo de registros Modbus acordado (un mapa
 | **101** | `tension_dc` | `tension_dc` | **Input Register** | Solo Lectura | Voltios ($V$) | **Tensión continua del campo solar** (ej. 600 - 700 V). |
 | **102** | `potencia_activa` | `potencia_activa` | **Input Register** | Solo Lectura | Vatios ($W$) | **Potencia Activa AC inyectada a la red** (ej. 0 - 32000 W). |
 | **103** | `frecuencia_red` | `frecuencia_red` | **Input Register** | Solo Lectura | Décimas de Hz ($Hz \times 10$) | **Frecuencia de red** (ej. 500 = 50.0 Hz). |
-| **104** | `codigo_alarma` | `codigo_alarma` | **Input Register** | Solo Lectura | Entero | **Código de Alarma** (`0`: Normal, `101`: Sobretensión de red). |
+| **104** | `codigo_alarma` | `codigo_alarma` | **Input Register** | Solo Lectura | Entero | **Código de Alarma** (`0`: Normal, `101`: Sobretensión, `102`: Sobretemperatura). |
 | **200** | `limite_potencia` | `limite_potencia` | **Holding Register**| Lectura/Escritura | Porcentaje ($0 - 100\,\%$) | **Consigna de limitación de potencia** enviada por el operador. |
 
 ---
@@ -383,9 +389,13 @@ Para experimentar la separación entre el equipo de campo y la sala de control, 
    ```
 
 Desde el menú del SCADA:
-* Pulsa `[1]` para dar la orden de conexión a red (Marcha) y comprueba en la Terminal 1 cómo el inversor comienza a inyectar potencia.
-* Pulsa `[5]` para entrar en el panel de telemetría continua en tiempo real.
-* Pulsa `[3]` para modificar la consigna de limitación de potencia (ej. `50` %) y observa cómo la potencia activa se ajusta de inmediato tanto en el SCADA como en el inversor.
+* Pulsa **`[1]`** para dar la orden de conexión a red (Marcha) y comprueba en la Terminal 1 cómo el inversor comienza a inyectar potencia.
+* Pulsa **`[5]`** para entrar en el panel de telemetría continua en tiempo real.
+* Pulsa **`[3]`** para modificar la consigna de limitación de potencia (ej. `50` %) y observa cómo la potencia activa se ajusta de inmediato tanto en el SCADA como en el inversor.
+* **Simulación y rearme de Alarmas de Protección (`[4]`):**
+  1. Mientras el inversor está generando, cada **$20 \pm 5$ segundos** se simula una perturbación fortuita externa (disparo por **Sobretensión en red AC `101`** o **Sobretemperatura en el puente IGBT `102`**).
+  2. Al disparar la protección, el inversor se desconecta automáticamente de la red (`0 W`), desactiva la orden de marcha y queda bloqueado por seguridad en estado de **ALARMA (`99`)** (rechazando cualquier intento de reconexión directa con `[1]`).
+  3. Para recuperar la planta, regresa al menú (`Ctrl+C`), pulsa **`[4]` (Resetear / Reconocer Alarmas)** para rearmar las protecciones y devolver el equipo a espera (`STANDBY`), y a continuación vuelve a dar marcha con **`[1]`**.
 
 ---
 
@@ -404,7 +414,7 @@ Si cambia la IP del inversor en planta o se reorganiza el mapa de memoria, oblig
 ### Trabajo a Realizar por el Alumno
 
 #### Paso 1: Completar `config.json` en el Servidor (`servidor_inversor/`)
-Renombra `config_plantilla_incompleta.json` a `config.json` y completa los registros que faltan según la tabla de la Sección 6:
+Renombra `config_plantilla_incompleta.json` a `config.json`, elimina o sustituye la línea de ayuda `"_ayuda_alumno"` y completa los registros que faltan según la tabla de la Sección 6 (¡cuidado con no olvidar las comas al separar cada línea!):
 ```json
 {
   "servidor": {
@@ -419,14 +429,14 @@ Renombra `config_plantilla_incompleta.json` a `config.json` y completa los regis
     "orden_marcha": 0,
     "reset_alarma": 1,
     "estado_inversor": 100,
-    "tension_dc": 101
-    // ... ALUMNO: Añade aquí potencia_activa, frecuencia_red, codigo_alarma y limite_potencia ...
+    "tension_dc": 101,
+    "_ayuda_alumno": "COMPLETA AQUI LOS REGISTROS QUE FALTAN: potencia_activa, frecuencia_red, codigo_alarma, limite_potencia"
   }
 }
 ```
 
 #### Paso 2: Completar `config.json` en el Cliente (`cliente_scada/`)
-Renombra `config_plantilla_incompleta.json` a `config.json` y completa los tags que faltan:
+Renombra `config_plantilla_incompleta.json` a `config.json` y completa igualmente los tags que faltan:
 ```json
 {
   "conexion_inversor": {
@@ -440,26 +450,39 @@ Renombra `config_plantilla_incompleta.json` a `config.json` y completa los tags 
     "orden_marcha": 0,
     "reset_alarma": 1,
     "estado_inversor": 100,
-    "tension_dc": 101
-    // ... ALUMNO: Añade aquí potencia_activa, frecuencia_red, codigo_alarma y limite_potencia ...
+    "tension_dc": 101,
+    "_ayuda_alumno": "COMPLETA AQUI LOS TAGS QUE FALTAN: potencia_activa, frecuencia_red, codigo_alarma, limite_potencia"
   }
 }
 ```
 
-#### Paso 3: Carga dinámica en Python
-En cada script, lee el archivo JSON al inicio del programa mediante `json.load(f)`:
-```python
-import json
+#### Paso 3: Sustituir las constantes *hardcodeadas* por la carga desde JSON en Python
+En la cabecera (Sección 1) de ambos scripts (`servidor_inversor.py` y `cliente_scada.py`), ya dispones de la función `cargar_configuracion()` que lee `config.json` mediante `json.load(f)`:
 
-def cargar_configuracion(ruta: str = "config.json") -> dict:
-    with open(ruta, "r", encoding="utf-8") as f:
-        return json.load(f)
-```
-Sustituye las variables hardcodeadas por las consultas al diccionario:
-* En el inversor: `config["registros"]["orden_marcha"]`
-* En el SCADA: `config["tags"]["orden_marcha"]`
+1. Cambia la línea `CONFIG = {}` por:
+   ```python
+   CONFIG = cargar_configuracion()
+   ```
+2. Sustituye todos los valores fijos (*hardcodeados*) de esa sección por las consultas al diccionario `CONFIG` siguiendo el comentario de ayuda que acompaña a cada línea:
+   * En el **Inversor (`servidor_inversor.py`)**:
+     ```python
+     SERVER_HOST = CONFIG["servidor"]["host"]
+     SERVER_PORT = CONFIG["servidor"]["puerto"]
+     POTENCIA_NOMINAL_W = CONFIG["parametros_planta"]["potencia_nominal_w"]
+     TENSION_PANELES_VDC = CONFIG["parametros_planta"]["tension_paneles_vdc"]
+     ADDR_ORDEN_MARCHA = CONFIG["registros"]["orden_marcha"]
+     # ... (y así con el resto de registros)
+     ```
+   * En el **SCADA (`cliente_scada.py`)**:
+     ```python
+     INVERSOR_HOST = CONFIG["conexion_inversor"]["host"]
+     INVERSOR_PORT = CONFIG["conexion_inversor"]["puerto"]
+     TIEMPO_REFRESCO_SEGUNDOS = CONFIG["scada"]["tiempo_refresco_segundos"]
+     TAG_ORDEN_MARCHA = CONFIG["tags"]["orden_marcha"]
+     # ... (y así con el resto de tags)
+     ```
 
-**Comprobación:** Arranca de nuevo ambos programas y confirma que la simulación sigue operando exactamente igual que antes.
+**Comprobación:** Arranca de nuevo ambos programas y confirma que la simulación sigue operando exactamente igual que antes, pero ahora gobernada íntegramente desde los dos archivos `config.json`.
 
 ---
 
